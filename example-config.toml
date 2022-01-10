@@ -2,6 +2,7 @@ rpc_ws_url = "ws://api.mainnet-beta.solana.com"
 rpc_http_url = "https://api.mainnet-beta.solana.com"
 mango_program_id = "mv3ekLzLbnVPNxjSKvqBpU3ZeZXPQdEC3bp5MDEBG68"
 mango_group_id = "98pjRuQjK3qA6gXts96PqZT4Ze5QmnCmt3QYjhbUSPue"
+mango_cache_id = "EBDRoayCDDUvDgCimta45ajQeXbexv7aKqJubruqpyvu"
 mango_signer_id = "9BVcYqEQxyccuwznvxXqDkSJFavvTyheiTYk231T1A8S"
 serum_program_id = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin"
 

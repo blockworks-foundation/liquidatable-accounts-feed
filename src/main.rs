@@ -2,16 +2,22 @@ pub mod metrics;
 pub mod websocket_source;
 
 use {
+    anyhow::Context,
     async_trait::async_trait,
     log::*,
+    mango::state::{
+        DataType, HealthCache, MangoAccount, MangoCache, MangoGroup, UserActiveAssets, MAX_PAIRS,
+    },
+    mango_common::Loadable,
     serde_derive::Deserialize,
-    solana_sdk::{account::Account, pubkey::Pubkey},
-    std::collections::BTreeMap,
-    std::collections::HashMap,
+    solana_sdk::account::{AccountSharedData, ReadableAccount},
+    solana_sdk::account_info::AccountInfo,
+    solana_sdk::pubkey::Pubkey,
+    std::collections::{HashMap, HashSet},
     std::fs::File,
     std::io::Read,
-    std::sync::Arc,
     std::str::FromStr,
+    std::sync::Arc,
 };
 
 trait AnyhowWrap {
@@ -44,7 +50,7 @@ pub struct SlotData {
 #[derive(Clone, Debug)]
 pub struct AccountData {
     pub slot: u64,
-    pub account: Account,
+    pub account: AccountSharedData,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -53,8 +59,9 @@ pub struct Config {
     pub rpc_http_url: String,
     pub mango_program_id: String,
     pub mango_group_id: String,
-    pub serum_program_id: String,
+    pub mango_cache_id: String,
     pub mango_signer_id: String,
+    pub serum_program_id: String,
 }
 
 pub fn encode_address(addr: &Pubkey) -> String {
@@ -179,7 +186,7 @@ impl ChainData {
     fn update_from_websocket(&mut self, message: websocket_source::Message) {
         match message {
             websocket_source::Message::Account(account_write) => {
-                info!("single message");
+                trace!("websocket account message");
                 self.update_account(
                     account_write.pubkey,
                     AccountData {
@@ -189,7 +196,7 @@ impl ChainData {
                 );
             }
             websocket_source::Message::Slot(slot_update) => {
-                info!("slot message");
+                trace!("websocket slot message");
                 let slot_update = match *slot_update {
                     solana_client::rpc_response::SlotUpdate::CreatedBank {
                         slot, parent, ..
@@ -222,6 +229,134 @@ impl ChainData {
             }
         }
     }
+
+    fn is_account_write_live(&self, write: &AccountData) -> bool {
+        self.slots
+            .get(&write.slot)
+            // either the slot is rooted or in the current chain
+            .map(|s| s.status == SlotStatus::Rooted || s.chain == self.newest_processed_slot)
+            // if the slot can't be found but preceeds newest rooted, use it too (old rooted slots are removed)
+            .unwrap_or(write.slot <= self.newest_rooted_slot)
+    }
+
+    /// Cloned snapshot of all the most recent live writes per pubkey
+    fn accounts_snapshot(&self) -> HashMap<Pubkey, AccountData> {
+        self.accounts
+            .iter()
+            .filter_map(|(pubkey, writes)| {
+                let latest_good_write = writes
+                    .iter()
+                    .rev()
+                    .find(|w| self.is_account_write_live(w))?;
+                Some((pubkey.clone(), latest_good_write.clone()))
+            })
+            .collect()
+    }
+
+    /// Ref to the most recent live write of the pubkey
+    fn account<'a>(&'a self, pubkey: &Pubkey) -> anyhow::Result<&'a AccountSharedData> {
+        self.accounts
+            .get(pubkey)
+            .ok_or(anyhow::anyhow!("account {} not found", pubkey))?
+            .iter()
+            .rev()
+            .find(|w| self.is_account_write_live(w))
+            .ok_or(anyhow::anyhow!("account {} has no live data", pubkey))
+            .map(|w| &w.account)
+    }
+}
+
+// FUTURE: It'd be very nice if I could map T to the DataType::T constant!
+fn load_mango_account<T: Loadable + Sized>(
+    data_type: DataType,
+    account: &AccountSharedData,
+) -> anyhow::Result<&T> {
+    let data = account.data();
+    let data_type_int = data_type as u8;
+    if data.len() != std::mem::size_of::<T>() {
+        anyhow::bail!(
+            "bad account size for {}: {} expected {}",
+            data_type_int,
+            data.len(),
+            std::mem::size_of::<T>()
+        );
+    }
+    if data[0] != data_type_int {
+        anyhow::bail!(
+            "unexpected data type for {}, got {}",
+            data_type_int,
+            data[0]
+        );
+    }
+    return Ok(Loadable::load_from_bytes(&data).expect("always Ok"));
+}
+
+pub fn load_open_orders(
+    account: &AccountSharedData,
+) -> anyhow::Result<&serum_dex::state::OpenOrders> {
+    let data = account.data();
+    let expected_size = 12 + std::mem::size_of::<serum_dex::state::OpenOrders>();
+    if data.len() != expected_size {
+        anyhow::bail!(
+            "bad open orders account size: {} expected {}",
+            data.len(),
+            expected_size
+        );
+    }
+    if &data[0..5] != "serum".as_bytes() {
+        anyhow::bail!("unexpected open orders account prefix");
+    }
+    Ok(bytemuck::from_bytes::<serum_dex::state::OpenOrders>(
+        &data[5..data.len() - 7],
+    ))
+}
+
+fn get_open_orders<'a>(
+    chain_data: &'a ChainData,
+    group: &MangoGroup,
+    account: &'a MangoAccount,
+) -> anyhow::Result<Vec<Option<&'a serum_dex::state::OpenOrders>>> {
+    let mut unpacked = vec![None; MAX_PAIRS];
+    for i in 0..group.num_oracles {
+        if account.in_margin_basket[i] {
+            let oo = chain_data.account(&account.spot_open_orders[i])?;
+            unpacked[i] = Some(load_open_orders(oo)?);
+        }
+    }
+    Ok(unpacked)
+}
+
+fn check_health_single(
+    chain_data: &ChainData,
+    group_id: &Pubkey,
+    cache_id: &Pubkey,
+    account_id: &Pubkey,
+) -> anyhow::Result<()> {
+    let group = load_mango_account::<MangoGroup>(
+        DataType::MangoGroup,
+        chain_data
+            .account(group_id)
+            .context("getting group account")?,
+    )?;
+    let cache = load_mango_account::<MangoCache>(
+        DataType::MangoCache,
+        chain_data
+            .account(cache_id)
+            .context("getting cache account")?,
+    )?;
+    let account = load_mango_account::<MangoAccount>(
+        DataType::MangoAccount,
+        chain_data
+            .account(account_id)
+            .context("getting user account")?,
+    )?;
+    let oos = get_open_orders(chain_data, group, account).context("getting user open orders")?;
+
+    let assets = UserActiveAssets::new(group, account, vec![]);
+    let mut health_cache = HealthCache::new(assets);
+    health_cache.init_vals_with_orders_vec(group, cache, account, &oos)?;
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -240,6 +375,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let mango_program_id = Pubkey::from_str(&config.mango_program_id)?;
+    let mango_group_id = Pubkey::from_str(&config.mango_group_id)?;
+    let mango_cache_id = Pubkey::from_str(&config.mango_cache_id)?;
 
     solana_logger::setup_with_default("info");
     info!("startup");
@@ -253,6 +390,7 @@ async fn main() -> anyhow::Result<()> {
     // TODO: Also have a snapshot source
 
     let mut chain_data = ChainData::default();
+    let mut mango_accounts = HashSet::<Pubkey>::new();
 
     loop {
         let message = websocket_receiver.recv().await.unwrap();
@@ -265,27 +403,52 @@ async fn main() -> anyhow::Result<()> {
         // specific program logic using the mirrored data
         match message {
             websocket_source::Message::Account(account_write) => {
+                let data = account_write.account.data();
+
                 // TODO: Do we need to check health when open orders accounts change?
-                if account_write.account.owner != mango_program_id || account_write.account.data.len() == 0 {
+                if account_write.account.owner() != &mango_program_id || data.len() == 0 {
                     continue;
                 }
 
-                let kind = account_write.account.data[0];
+                let kind = DataType::try_from(data[0]).unwrap();
                 match kind {
                     // MangoAccount
-                    1 => {
-                        // TODO: Check that it belongs to the right group
-                        // TODO: track mango account pubkeys in a set - need to iterate them for health checks
+                    DataType::MangoAccount => {
+                        if data.len() != std::mem::size_of::<MangoAccount>() {
+                            continue;
+                        }
+                        let data = MangoAccount::load_from_bytes(&data).expect("always Ok");
+                        if data.mango_group != mango_group_id {
+                            continue;
+                        }
+
+                        // Track all MangoAccounts: we need to iterate over them later
+                        mango_accounts.insert(account_write.pubkey);
+
                         // TODO: check health of this particular one
-                    },
+                        warn!(
+                            "{:?}",
+                            check_health_single(
+                                &chain_data,
+                                &mango_group_id,
+                                &mango_cache_id,
+                                &account_write.pubkey
+                            )
+                        );
+                    }
                     // MangoCache
-                    7 => {
-                        // TODO: Check that it belongs to the right group, for that, we need to check the MangoGroup account
-                        // TODO: check health of all accounts
-                    },
-                    _ => {},
+                    DataType::MangoCache => {
+                        if account_write.pubkey != mango_cache_id {
+                            continue;
+                        }
+
+                        // check health of all accounts
+                        let accounts = chain_data.accounts_snapshot();
+                        // TODO: launch computation here
+                    }
+                    _ => {}
                 }
-            },
+            }
             _ => {}
         }
     }

@@ -8,7 +8,7 @@ use solana_client::{
     rpc_response::{Response, RpcKeyedAccount},
 };
 use solana_rpc::{rpc::rpc_full::FullClient, rpc::OptionalContext, rpc_pubsub::RpcSolPubSubClient};
-use solana_sdk::{account::Account, commitment_config::CommitmentConfig, pubkey::Pubkey};
+use solana_sdk::{account::AccountSharedData, commitment_config::CommitmentConfig, pubkey::Pubkey};
 
 use log::*;
 use std::{
@@ -23,13 +23,13 @@ use crate::{AnyhowWrap, Config};
 pub struct AccountUpdate {
     pub pubkey: Pubkey,
     pub slot: u64,
-    pub account: Account, // possibly shareddata?
+    pub account: AccountSharedData,
 }
 
 impl AccountUpdate {
     pub fn from_rpc(rpc: Response<RpcKeyedAccount>) -> anyhow::Result<Self> {
         let pubkey = Pubkey::from_str(&rpc.value.pubkey)?;
-        let account: Account = rpc
+        let account = rpc
             .value
             .account
             .decode()
