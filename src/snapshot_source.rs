@@ -16,35 +16,31 @@ use tokio::time;
 use crate::{AnyhowWrap, Config};
 
 #[derive(Clone)]
-pub struct AccountSnapshot {
-    pub slot: u64,
-    pub accounts: Vec<AccountSnapshotData>,
-}
-
-#[derive(Clone)]
-pub struct AccountSnapshotData {
+pub struct AccountUpdate {
     pub pubkey: Pubkey,
+    pub slot: u64,
     pub account: AccountSharedData,
 }
 
+#[derive(Clone, Default)]
+pub struct AccountSnapshot {
+    pub accounts: Vec<AccountUpdate>,
+}
+
 impl AccountSnapshot {
-    pub fn from_rpc(rpc: Response<Vec<RpcKeyedAccount>>) -> anyhow::Result<Self> {
-        Ok(Self {
-            slot: rpc.context.slot,
-            accounts: rpc
-                .value
-                .iter()
-                .map(|a| {
-                    Ok(AccountSnapshotData {
-                        pubkey: Pubkey::from_str(&a.pubkey).unwrap(),
-                        account: a
-                            .account
-                            .decode()
-                            .ok_or(anyhow::anyhow!("could not decode account"))?,
-                    })
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?,
-        })
+    pub fn extend_from_rpc(&mut self, rpc: Response<Vec<RpcKeyedAccount>>) -> anyhow::Result<()> {
+        self.accounts.reserve(rpc.value.len());
+        for a in rpc.value {
+            self.accounts.push(AccountUpdate {
+                slot: rpc.context.slot,
+                pubkey: Pubkey::from_str(&a.pubkey).unwrap(),
+                account: a
+                    .account
+                    .decode()
+                    .ok_or(anyhow::anyhow!("could not decode account"))?,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -92,43 +88,40 @@ async fn feed_snapshots(
 
     // TODO: This way the snapshots are done sequentially, and a failing snapshot prohibits the second one to be attempted
 
-    let account_snapshot = rpc_client
+    let mut snapshot = AccountSnapshot::default();
+
+    let response = rpc_client
         .get_program_accounts(
             mango_program_id.to_string(),
             Some(all_accounts_config.clone()),
         )
         .await
         .map_err_anyhow()?;
-    if let OptionalContext::Context(account_snapshot_response) = account_snapshot {
-        sender
-            .send(AccountSnapshot::from_rpc(account_snapshot_response)?)
-            .await
-            .expect("sending must succeed");
+    if let OptionalContext::Context(account_snapshot_response) = response {
+        snapshot.extend_from_rpc(account_snapshot_response)?;
     } else {
         anyhow::bail!("did not receive context");
     }
 
-    let account_snapshot = rpc_client
+    let response = rpc_client
         .get_program_accounts(
             serum_program_id.to_string(),
             Some(open_orders_accounts_config.clone()),
         )
         .await
         .map_err_anyhow()?;
-    if let OptionalContext::Context(account_snapshot_response) = account_snapshot {
-        sender
-            .send(AccountSnapshot::from_rpc(account_snapshot_response)?)
-            .await
-            .expect("sending must succeed");
+    if let OptionalContext::Context(account_snapshot_response) = response {
+        snapshot.extend_from_rpc(account_snapshot_response)?;
     } else {
         anyhow::bail!("did not receive context");
     }
 
+    sender.send(snapshot).await.expect("sending must succeed");
     Ok(())
 }
 
 pub fn start(config: Config, sender: async_channel::Sender<AccountSnapshot>) {
-    let mut interval = time::interval(time::Duration::from_secs(180));
+    let mut interval = time::interval(time::Duration::from_secs(config.snapshot_interval_secs));
 
     tokio::spawn(async move {
         loop {

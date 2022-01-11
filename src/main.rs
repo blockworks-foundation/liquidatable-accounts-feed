@@ -65,6 +65,7 @@ pub struct Config {
     pub mango_cache_id: String,
     pub mango_signer_id: String,
     pub serum_program_id: String,
+    pub snapshot_interval_secs: u64,
 }
 
 pub fn encode_address(addr: &Pubkey) -> String {
@@ -184,6 +185,18 @@ impl ChainData {
                 }
             }
         };
+    }
+
+    fn update_from_snapshot(&mut self, snapshot: snapshot_source::AccountSnapshot) {
+        for account_write in snapshot.accounts {
+            self.update_account(
+                account_write.pubkey,
+                AccountData {
+                    slot: account_write.slot,
+                    account: account_write.account,
+                },
+            );
+        }
     }
 
     fn update_from_websocket(&mut self, message: websocket_source::Message) {
@@ -391,6 +404,10 @@ async fn main() -> anyhow::Result<()> {
         async_channel::unbounded::<websocket_source::Message>();
     websocket_source::start(config.clone(), websocket_sender);
 
+    // Wait for some websocket data to accumulate before requesting snapshots,
+    // to make it more likely that
+    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+
     let (snapshot_sender, snapshot_receiver) =
         async_channel::unbounded::<snapshot_source::AccountSnapshot>();
     snapshot_source::start(config.clone(), snapshot_sender);
@@ -398,9 +415,9 @@ async fn main() -> anyhow::Result<()> {
     let mut chain_data = ChainData::default();
     let mut mango_accounts = HashSet::<Pubkey>::new();
 
-    // TODO: wait for the first snapshot before starting, otherwise accounts will be missing everywhere
-    // and it would be preferable if missing accounts are an error
+    let mut one_snapshot_done = false;
 
+    info!("main loop");
     loop {
         tokio::select! {
             message = websocket_receiver.recv() => {
@@ -435,6 +452,10 @@ async fn main() -> anyhow::Result<()> {
                                 // Track all MangoAccounts: we need to iterate over them later
                                 mango_accounts.insert(account_write.pubkey);
 
+                                if !one_snapshot_done {
+                                    continue;
+                                }
+
                                 // TODO: check health of this particular one
                                 if let Err(err) = check_health_single(
                                         &chain_data,
@@ -451,13 +472,16 @@ async fn main() -> anyhow::Result<()> {
                                     continue;
                                 }
 
+                                if !one_snapshot_done {
+                                    continue;
+                                }
+
                                 // check health of all accounts
 
                                 // TODO: This could be done asynchronously by calling
                                 // let accounts = chain_data.accounts_snapshot();
                                 // and then working with the snapshot of the data
 
-                                info!("checking all account health");
                                 for pubkey in mango_accounts.iter() {
                                     let health = check_health_single(&chain_data, &mango_group_id, &mango_cache_id, &pubkey);
                                     match health {
@@ -465,12 +489,11 @@ async fn main() -> anyhow::Result<()> {
                                             if value < 0 { info!("account {} has negative health {}", pubkey, value) }
                                         },
                                         Err(err) => {
-                                            //warn!("error computing health of {}: {:?}", pubkey, err);
+                                            warn!("error computing health of {}: {:?}", pubkey, err);
                                         },
 
                                     }
                                 }
-                                info!("checking all account health done");
                             }
                             _ => {}
                         }
@@ -480,10 +503,8 @@ async fn main() -> anyhow::Result<()> {
             },
             message = snapshot_receiver.recv() => {
                 let message = message.expect("channel not closed");
-
-                for account_write in message.accounts {
-                    chain_data.update_account(account_write.pubkey, AccountData { slot: message.slot, account: account_write.account });
-                }
+                chain_data.update_from_snapshot(message);
+                one_snapshot_done = true;
 
                 // TODO: trigger a full health check
             },
