@@ -436,15 +436,14 @@ async fn main() -> anyhow::Result<()> {
                                 mango_accounts.insert(account_write.pubkey);
 
                                 // TODO: check health of this particular one
-                                warn!(
-                                    "{:?}",
-                                    check_health_single(
+                                if let Err(err) = check_health_single(
                                         &chain_data,
                                         &mango_group_id,
                                         &mango_cache_id,
                                         &account_write.pubkey
-                                    )
-                                );
+                                    ) {
+                                    warn!("error computing health of {}: {:?}", account_write.pubkey, err);
+                                }
                             }
                             // MangoCache
                             DataType::MangoCache => {
@@ -453,8 +452,25 @@ async fn main() -> anyhow::Result<()> {
                                 }
 
                                 // check health of all accounts
-                                let accounts = chain_data.accounts_snapshot();
-                                // TODO: launch computation here
+
+                                // TODO: This could be done asynchronously by calling
+                                // let accounts = chain_data.accounts_snapshot();
+                                // and then working with the snapshot of the data
+
+                                info!("checking all account health");
+                                for pubkey in mango_accounts.iter() {
+                                    let health = check_health_single(&chain_data, &mango_group_id, &mango_cache_id, &pubkey);
+                                    match health {
+                                        Ok(value) => {
+                                            if value < 0 { info!("account {} has negative health {}", pubkey, value) }
+                                        },
+                                        Err(err) => {
+                                            //warn!("error computing health of {}: {:?}", pubkey, err);
+                                        },
+
+                                    }
+                                }
+                                info!("checking all account health done");
                             }
                             _ => {}
                         }
