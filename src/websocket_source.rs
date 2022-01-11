@@ -1,5 +1,5 @@
 use jsonrpc_core::futures::StreamExt;
-use jsonrpc_core_client::transports::{http, ws};
+use jsonrpc_core_client::transports::ws;
 
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
@@ -7,15 +7,11 @@ use solana_client::{
     rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
     rpc_response::{Response, RpcKeyedAccount},
 };
-use solana_rpc::{rpc::rpc_full::FullClient, rpc::OptionalContext, rpc_pubsub::RpcSolPubSubClient};
+use solana_rpc::{rpc::OptionalContext, rpc_pubsub::RpcSolPubSubClient};
 use solana_sdk::{account::AccountSharedData, commitment_config::CommitmentConfig, pubkey::Pubkey};
 
 use log::*;
-use std::{
-    str::FromStr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use crate::{AnyhowWrap, Config};
 
@@ -52,14 +48,9 @@ async fn feed_data(config: &Config, sender: async_channel::Sender<Message>) -> a
     let mango_program_id = Pubkey::from_str(&config.mango_program_id)?;
     let serum_program_id = Pubkey::from_str(&config.serum_program_id)?;
     let mango_signer_id = Pubkey::from_str(&config.mango_signer_id)?;
-    let snapshot_duration = Duration::from_secs(300);
 
     let connect = ws::try_connect::<RpcSolPubSubClient>(&config.rpc_ws_url).map_err_anyhow()?;
     let client = connect.await.map_err_anyhow()?;
-
-    let rpc_client = http::connect_with_options::<FullClient>(&config.rpc_http_url, true)
-        .await
-        .map_err_anyhow()?;
 
     let account_info_config = RpcAccountInfoConfig {
         encoding: Some(UiAccountEncoding::Base64),
@@ -105,30 +96,7 @@ async fn feed_data(config: &Config, sender: async_channel::Sender<Message>) -> a
         .map_err_anyhow()?;
     let mut slot_sub = client.slots_updates_subscribe().map_err_anyhow()?;
 
-    let mut last_snapshot = Instant::now() - snapshot_duration;
-
     loop {
-        // occasionally cause a new snapshot to be produced
-        // including the first time
-        /*
-        if last_snapshot + snapshot_duration <= Instant::now() {
-            let account_snapshot = rpc_client
-                .get_program_accounts(
-                    mango_program_id.to_string(),
-                    Some(all_accounts_config.clone()),
-                )
-                .await
-                .map_err_anyhow()?;
-            if let OptionalContext::Context(account_snapshot_response) = account_snapshot {
-                sender
-                    .send(Message::SnapshotUpdate(account_snapshot_response))
-                    .await
-                    .expect("sending must succeed");
-            }
-            last_snapshot = Instant::now();
-        }
-        */
-
         tokio::select! {
             message = mango_sub.next() => {
                 if let Some(data) = message {

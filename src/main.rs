@@ -1,12 +1,15 @@
 pub mod metrics;
+pub mod snapshot_source;
 pub mod websocket_source;
 
 use {
     anyhow::Context,
     async_trait::async_trait,
+    fixed::types::I80F48,
     log::*,
     mango::state::{
-        DataType, HealthCache, MangoAccount, MangoCache, MangoGroup, UserActiveAssets, MAX_PAIRS,
+        DataType, HealthCache, HealthType, MangoAccount, MangoCache, MangoGroup, UserActiveAssets,
+        MAX_PAIRS,
     },
     mango_common::Loadable,
     serde_derive::Deserialize,
@@ -331,7 +334,7 @@ fn check_health_single(
     group_id: &Pubkey,
     cache_id: &Pubkey,
     account_id: &Pubkey,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<I80F48> {
     let group = load_mango_account::<MangoGroup>(
         DataType::MangoGroup,
         chain_data
@@ -355,8 +358,9 @@ fn check_health_single(
     let assets = UserActiveAssets::new(group, account, vec![]);
     let mut health_cache = HealthCache::new(assets);
     health_cache.init_vals_with_orders_vec(group, cache, account, &oos)?;
+    let health = health_cache.get_health(group, HealthType::Maint);
 
-    Ok(())
+    Ok(health)
 }
 
 #[tokio::main]
@@ -385,71 +389,88 @@ async fn main() -> anyhow::Result<()> {
 
     let (websocket_sender, websocket_receiver) =
         async_channel::unbounded::<websocket_source::Message>();
-    websocket_source::start(config, websocket_sender);
+    websocket_source::start(config.clone(), websocket_sender);
 
-    // TODO: Also have a snapshot source
+    let (snapshot_sender, snapshot_receiver) =
+        async_channel::unbounded::<snapshot_source::AccountSnapshot>();
+    snapshot_source::start(config.clone(), snapshot_sender);
 
     let mut chain_data = ChainData::default();
     let mut mango_accounts = HashSet::<Pubkey>::new();
 
+    // TODO: wait for the first snapshot before starting, otherwise accounts will be missing everywhere
+    // and it would be preferable if missing accounts are an error
+
     loop {
-        let message = websocket_receiver.recv().await.unwrap();
-        info!("got message");
+        tokio::select! {
+            message = websocket_receiver.recv() => {
+                let message = message.expect("channel not closed");
 
-        // build a model of slots and accounts in `chain_data`
-        // this code should be generic so it can be reused in future projects
-        chain_data.update_from_websocket(message.clone());
+                // build a model of slots and accounts in `chain_data`
+                // this code should be generic so it can be reused in future projects
+                chain_data.update_from_websocket(message.clone());
 
-        // specific program logic using the mirrored data
-        match message {
-            websocket_source::Message::Account(account_write) => {
-                let data = account_write.account.data();
+                // specific program logic using the mirrored data
+                match message {
+                    websocket_source::Message::Account(account_write) => {
+                        let data = account_write.account.data();
 
-                // TODO: Do we need to check health when open orders accounts change?
-                if account_write.account.owner() != &mango_program_id || data.len() == 0 {
-                    continue;
-                }
-
-                let kind = DataType::try_from(data[0]).unwrap();
-                match kind {
-                    // MangoAccount
-                    DataType::MangoAccount => {
-                        if data.len() != std::mem::size_of::<MangoAccount>() {
-                            continue;
-                        }
-                        let data = MangoAccount::load_from_bytes(&data).expect("always Ok");
-                        if data.mango_group != mango_group_id {
+                        // TODO: Do we need to check health when open orders accounts change?
+                        if account_write.account.owner() != &mango_program_id || data.len() == 0 {
                             continue;
                         }
 
-                        // Track all MangoAccounts: we need to iterate over them later
-                        mango_accounts.insert(account_write.pubkey);
+                        let kind = DataType::try_from(data[0]).unwrap();
+                        match kind {
+                            // MangoAccount
+                            DataType::MangoAccount => {
+                                if data.len() != std::mem::size_of::<MangoAccount>() {
+                                    continue;
+                                }
+                                let data = MangoAccount::load_from_bytes(&data).expect("always Ok");
+                                if data.mango_group != mango_group_id {
+                                    continue;
+                                }
 
-                        // TODO: check health of this particular one
-                        warn!(
-                            "{:?}",
-                            check_health_single(
-                                &chain_data,
-                                &mango_group_id,
-                                &mango_cache_id,
-                                &account_write.pubkey
-                            )
-                        );
-                    }
-                    // MangoCache
-                    DataType::MangoCache => {
-                        if account_write.pubkey != mango_cache_id {
-                            continue;
+                                // Track all MangoAccounts: we need to iterate over them later
+                                mango_accounts.insert(account_write.pubkey);
+
+                                // TODO: check health of this particular one
+                                warn!(
+                                    "{:?}",
+                                    check_health_single(
+                                        &chain_data,
+                                        &mango_group_id,
+                                        &mango_cache_id,
+                                        &account_write.pubkey
+                                    )
+                                );
+                            }
+                            // MangoCache
+                            DataType::MangoCache => {
+                                if account_write.pubkey != mango_cache_id {
+                                    continue;
+                                }
+
+                                // check health of all accounts
+                                let accounts = chain_data.accounts_snapshot();
+                                // TODO: launch computation here
+                            }
+                            _ => {}
                         }
-
-                        // check health of all accounts
-                        let accounts = chain_data.accounts_snapshot();
-                        // TODO: launch computation here
                     }
                     _ => {}
                 }
-            }
-            _ => {}
+            },
+            message = snapshot_receiver.recv() => {
+                let message = message.expect("channel not closed");
+
+                for account_write in message.accounts {
+                    chain_data.update_account(account_write.pubkey, AccountData { slot: message.slot, account: account_write.account });
+                }
+
+                // TODO: trigger a full health check
+            },
         }
     }
 }
