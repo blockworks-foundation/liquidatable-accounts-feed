@@ -6,7 +6,7 @@ edition = "2021"
 
 [dependencies]
 jsonrpc-core = "18.0.0"
-jsonrpc-core-client = { version = "18.0.0", features = ["ws", "http"] }
+jsonrpc-core-client = { version = "18.0.0", features = ["ws", "http", "tls"] }
 
 solana-rpc = "=1.8.11"
 solana-client = "=1.8.11"

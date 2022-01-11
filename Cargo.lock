@@ -2112,6 +2112,7 @@ dependencies = [
  "flate2 0.2.20",
  "futures 0.3.19",
  "hyper 0.14.16",
+ "hyper-tls",
  "jsonrpc-core 18.0.0 (git+https://github.com/ckamm/jsonrpc.git?branch=ckamm/http-with-gzip)",
  "jsonrpc-pubsub 18.0.0 (git+https://github.com/ckamm/jsonrpc.git?branch=ckamm/http-with-gzip)",
  "jsonrpc-server-utils 18.0.0 (git+https://github.com/ckamm/jsonrpc.git?branch=ckamm/http-with-gzip)",
