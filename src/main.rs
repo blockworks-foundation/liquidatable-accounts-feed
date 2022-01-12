@@ -367,12 +367,19 @@ fn get_open_orders<'a>(
     Ok(unpacked)
 }
 
+#[derive(Debug)]
+struct HealthResult {
+    liquidatable: bool,
+    being_liquidated: bool,
+    health: I80F48, // can be init or maint, depending on being_liquidated
+}
+
 fn check_health_single(
     chain_data: &ChainData,
     group_id: &Pubkey,
     cache_id: &Pubkey,
     account_id: &Pubkey,
-) -> anyhow::Result<I80F48> {
+) -> anyhow::Result<HealthResult> {
     let group = load_mango_account::<MangoGroup>(
         DataType::MangoGroup,
         chain_data
@@ -396,9 +403,19 @@ fn check_health_single(
     let assets = UserActiveAssets::new(group, account, vec![]);
     let mut health_cache = HealthCache::new(assets);
     health_cache.init_vals_with_orders_vec(group, cache, account, &oos)?;
-    let health = health_cache.get_health(group, HealthType::Maint);
 
-    Ok(health)
+    let health_type = if account.being_liquidated {
+        HealthType::Init
+    } else {
+        HealthType::Maint
+    };
+    let health = health_cache.get_health(group, health_type);
+
+    Ok(HealthResult {
+        liquidatable: health < 0,
+        being_liquidated: account.being_liquidated,
+        health,
+    })
 }
 
 #[tokio::main]
@@ -508,15 +525,14 @@ async fn main() -> anyhow::Result<()> {
                                 // and then working with the snapshot of the data
 
                                 for pubkey in mango_accounts.iter() {
-                                    let health = check_health_single(&chain_data, &mango_group_id, &mango_cache_id, &pubkey);
-                                    match health {
-                                        Ok(value) => {
-                                            if value < 0 { info!("account {} has negative health {}", pubkey, value) }
-                                        },
-                                        Err(err) => {
-                                            warn!("error computing health of {}: {:?}", pubkey, err);
-                                        },
-
+                                    let result = check_health_single(&chain_data, &mango_group_id, &mango_cache_id, &pubkey);
+                                    if let Err(err) = result {
+                                        warn!("error computing health of {}: {:?}", pubkey, err);
+                                        continue;
+                                    }
+                                    let health = result.unwrap();
+                                    if health.liquidatable {
+                                        info!("account {} has negative health {}", pubkey, health.health)
                                     }
                                 }
                             }
