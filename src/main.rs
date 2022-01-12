@@ -72,15 +72,31 @@ pub fn encode_address(addr: &Pubkey) -> String {
     bs58::encode(&addr.to_bytes()).into_string()
 }
 
-#[derive(Default)]
 struct ChainData {
     slots: HashMap<u64, SlotData>,
     accounts: HashMap<Pubkey, Vec<AccountData>>,
     newest_rooted_slot: u64,
     newest_processed_slot: u64,
+    // storing global metrics here is not good style
+    metric_slots_count: metrics::MetricU64,
+    metric_accounts_count: metrics::MetricU64,
+    metric_account_write_count: metrics::MetricU64,
 }
 
 impl ChainData {
+    fn new(metrics: &metrics::Metrics) -> Self {
+        Self {
+            slots: HashMap::new(),
+            accounts: HashMap::new(),
+            newest_rooted_slot: 0,
+            newest_processed_slot: 0,
+            metric_slots_count: metrics.register_u64("chain_data_slots_count".into()),
+            metric_accounts_count: metrics.register_u64("chain_data_accounts_count".into()),
+            metric_account_write_count: metrics
+                .register_u64("chain_data_account_write_count".into()),
+        }
+    }
+
     fn update_slot(&mut self, new_slot: SlotData) {
         let new_processed_head = new_slot.slot > self.newest_processed_slot;
         if new_processed_head {
@@ -159,6 +175,15 @@ impl ChainData {
             // now it's fine to drop any slots before the new rooted head
             // as account writes for non-rooted slots before it have been dropped
             self.slots.retain(|s, _| *s >= self.newest_rooted_slot);
+
+            self.metric_slots_count.set(self.slots.len() as u64);
+            self.metric_accounts_count.set(self.accounts.len() as u64);
+            self.metric_account_write_count.set(
+                self.accounts
+                    .iter()
+                    .map(|(key, writes)| writes.len() as u64)
+                    .sum(),
+            );
         }
     }
 
@@ -398,7 +423,7 @@ async fn main() -> anyhow::Result<()> {
     solana_logger::setup_with_default("info");
     info!("startup");
 
-    let metrics_tx = metrics::start();
+    let metrics = metrics::start();
 
     let (websocket_sender, websocket_receiver) =
         async_channel::unbounded::<websocket_source::Message>();
@@ -412,7 +437,7 @@ async fn main() -> anyhow::Result<()> {
         async_channel::unbounded::<snapshot_source::AccountSnapshot>();
     snapshot_source::start(config.clone(), snapshot_sender);
 
-    let mut chain_data = ChainData::default();
+    let mut chain_data = ChainData::new(&metrics);
     let mut mango_accounts = HashSet::<Pubkey>::new();
 
     let mut one_snapshot_done = false;
