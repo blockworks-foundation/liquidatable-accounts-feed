@@ -7,7 +7,7 @@ use solana_client::{
     rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
     rpc_response::{Response, RpcKeyedAccount},
 };
-use solana_rpc::{rpc::OptionalContext, rpc_pubsub::RpcSolPubSubClient};
+use solana_rpc::rpc_pubsub::RpcSolPubSubClient;
 use solana_sdk::{account::AccountSharedData, commitment_config::CommitmentConfig, pubkey::Pubkey};
 
 use log::*;
