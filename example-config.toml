@@ -6,4 +6,5 @@ mango_cache_id = "EBDRoayCDDUvDgCimta45ajQeXbexv7aKqJubruqpyvu"
 mango_signer_id = "9BVcYqEQxyccuwznvxXqDkSJFavvTyheiTYk231T1A8S"
 serum_program_id = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin"
 snapshot_interval_secs = 240
+websocket_server_bind_address = "localhost:9123"
 

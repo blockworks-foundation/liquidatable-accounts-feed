@@ -2429,6 +2429,7 @@ dependencies = [
  "solana-rpc",
  "solana-sdk",
  "tokio",
+ "tokio-tungstenite",
  "toml",
 ]
 
@@ -4243,7 +4244,7 @@ dependencies = [
  "solana-vote-program",
  "thiserror",
  "tokio",
- "tungstenite",
+ "tungstenite 0.10.1",
  "url 2.2.2",
 ]
 
@@ -5564,6 +5565,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e80b39df6afcc12cdf752398ade96a6b9e99c903dfdc36e53ad10b9c366bca72"
+dependencies = [
+ "futures-util",
+ "log 0.4.14",
+ "tokio",
+ "tungstenite 0.16.0",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5744,6 +5757,25 @@ dependencies = [
  "native-tls",
  "rand 0.7.3",
  "sha-1 0.8.2",
+ "url 2.2.2",
+ "utf-8",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ad3713a14ae247f22a728a0456a545df14acf3867f905adff84be99e23b3ad1"
+dependencies = [
+ "base64 0.13.0",
+ "byteorder",
+ "bytes 1.1.0",
+ "http",
+ "httparse",
+ "log 0.4.14",
+ "rand 0.8.4",
+ "sha-1 0.9.8",
+ "thiserror",
  "url 2.2.2",
  "utf-8",
 ]

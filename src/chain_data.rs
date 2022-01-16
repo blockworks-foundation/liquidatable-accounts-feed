@@ -1,12 +1,13 @@
 use {
-    log::*,
-    solana_sdk::account::AccountSharedData,
-    solana_sdk::pubkey::Pubkey,
+    log::*, solana_sdk::account::AccountSharedData, solana_sdk::pubkey::Pubkey,
     std::collections::HashMap,
+};
+
+use {
     // TODO: None of these should be here
-    crate::websocket_source,
-    crate::snapshot_source,
     crate::metrics,
+    crate::snapshot_source,
+    crate::websocket_source,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]

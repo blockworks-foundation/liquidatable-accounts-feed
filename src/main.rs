@@ -1,9 +1,12 @@
+pub mod chain_data;
 pub mod metrics;
 pub mod snapshot_source;
+pub mod websocket_sink;
 pub mod websocket_source;
-pub mod chain_data;
 
 use {
+    crate::chain_data::*,
+    crate::websocket_sink::LiquidatableInfo,
     anyhow::Context,
     fixed::types::I80F48,
     log::*,
@@ -19,7 +22,6 @@ use {
     std::fs::File,
     std::io::Read,
     std::str::FromStr,
-    crate::chain_data::*,
 };
 
 trait AnyhowWrap {
@@ -44,6 +46,7 @@ pub struct Config {
     pub mango_signer_id: String,
     pub serum_program_id: String,
     pub snapshot_interval_secs: u64,
+    pub websocket_server_bind_address: String,
 }
 
 pub fn encode_address(addr: &Pubkey) -> String {
@@ -185,6 +188,11 @@ async fn main() -> anyhow::Result<()> {
 
     let metrics = metrics::start();
 
+    // Information about liquidatable accounts is sent through this channel
+    // and then forwarded to all connected websocket clients
+    let liquidatable_sender = websocket_sink::start(config.clone()).await?;
+
+    // Sourcing account and slot data from solana via websockets
     let (websocket_sender, websocket_receiver) =
         async_channel::unbounded::<websocket_source::Message>();
     websocket_source::start(config.clone(), websocket_sender);
@@ -193,6 +201,7 @@ async fn main() -> anyhow::Result<()> {
     // to make it more likely that
     tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
 
+    // Getting solana account snapshots via jsonrpc
     let (snapshot_sender, snapshot_receiver) =
         async_channel::unbounded::<snapshot_source::AccountSnapshot>();
     snapshot_source::start(config.clone(), snapshot_sender);
