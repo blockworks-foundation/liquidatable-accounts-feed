@@ -3,17 +3,44 @@ use {
     anyhow::Context,
     futures_util::{SinkExt, StreamExt},
     log::*,
+    serde::Serialize,
+    //serde_derive::Serialize,
+    solana_sdk::pubkey::Pubkey,
     tokio::net::{TcpListener, TcpStream},
-    //serde_derive::Deserialize,
-    //solana_sdk::pubkey::Pubkey,
     //std::str::FromStr,
     tokio::sync::broadcast,
 };
 
 #[derive(Clone, Debug)]
 pub enum LiquidatableInfo {
-    Start,
-    Stop,
+    Start { account: Pubkey },
+    Stop { account: Pubkey },
+}
+
+#[derive(Serialize)]
+struct JsonRpcEnvelope<T: Serialize> {
+    jsonrpc: String,
+    method: String,
+    params: T,
+}
+
+#[derive(Serialize)]
+struct JsonRpcLiquidatableStart {
+    account: String,
+}
+
+#[derive(Serialize)]
+struct JsonRpcLiquidatableStop {
+    account: String,
+}
+
+fn jsonrpc_message(method: &str, payload: impl Serialize) -> String {
+    serde_json::to_string(&JsonRpcEnvelope {
+        jsonrpc: "2.0".into(),
+        method: method.into(),
+        params: payload,
+    })
+    .unwrap()
 }
 
 async fn accept_connection(
@@ -43,17 +70,34 @@ async fn accept_connection(
                     None | Some(Err(_)) => break, // disconnected
                 }
             },
-            msg = rx.recv() => {
-                if msg.is_err() {
+            data = rx.recv() => {
+                if data.is_err() {
                     // broadcast stream is lagging or disconnected
                     // -> drop websocket connection
-                    warn!("liquidation info broadcast receiver had error: {:?}", msg);
+                    warn!("liquidation info broadcast receiver had error: {:?}", data);
                     ws_stream.close(None).await?;
                     break;
                 }
-                let msg = msg.unwrap();
 
-                ws_stream.send(Message::Text("msg".to_owned())).await?;
+                let message = match data.unwrap() {
+                    LiquidatableInfo::Start{account} => {
+                        jsonrpc_message(&"start_liquidatable",
+                            JsonRpcLiquidatableStart {
+                                account: account.to_string(),
+                            }
+                        )
+                    },
+                    LiquidatableInfo::Stop{account} => {
+                        jsonrpc_message(&"stop_liquidatable",
+                            JsonRpcLiquidatableStop {
+                                account: account.to_string(),
+                            }
+                        )
+                    },
+                };
+
+
+                ws_stream.send(Message::Text(message)).await?;
             },
             _ = interval.tick() => {
                 ws_stream.send(Message::Ping(vec![])).await?;

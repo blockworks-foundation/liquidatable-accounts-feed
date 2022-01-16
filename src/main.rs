@@ -22,6 +22,7 @@ use {
     std::fs::File,
     std::io::Read,
     std::str::FromStr,
+    tokio::sync::broadcast,
 };
 
 trait AnyhowWrap {
@@ -114,18 +115,18 @@ fn get_open_orders<'a>(
 }
 
 #[derive(Debug)]
-struct HealthResult {
+struct IsLiquidatable {
     liquidatable: bool,
     being_liquidated: bool,
     health: I80F48, // can be init or maint, depending on being_liquidated
 }
 
-fn check_health_single(
+fn compute_liquidatable_single(
     chain_data: &ChainData,
     group_id: &Pubkey,
     cache_id: &Pubkey,
     account_id: &Pubkey,
-) -> anyhow::Result<HealthResult> {
+) -> anyhow::Result<IsLiquidatable> {
     let group = load_mango_account::<MangoGroup>(
         DataType::MangoGroup,
         chain_data
@@ -157,11 +158,32 @@ fn check_health_single(
     };
     let health = health_cache.get_health(group, health_type);
 
-    Ok(HealthResult {
+    Ok(IsLiquidatable {
         liquidatable: health < 0,
         being_liquidated: account.being_liquidated,
         health,
     })
+}
+
+fn process_account(
+    chain_data: &ChainData,
+    group_id: &Pubkey,
+    cache_id: &Pubkey,
+    account_id: &Pubkey,
+    tx: &broadcast::Sender<LiquidatableInfo>,
+) {
+    let res = compute_liquidatable_single(chain_data, group_id, cache_id, account_id);
+    if let Err(err) = res {
+        warn!("error computing health of {}: {:?}", account_id, err);
+        return;
+    }
+    let res = res.unwrap();
+    if true || res.liquidatable {
+        info!("account {} is liquidatable: {:?}", account_id, res);
+        let _ = tx.send(LiquidatableInfo::Start {
+            account: account_id.clone(),
+        });
+    }
 }
 
 #[tokio::main]
@@ -250,15 +272,13 @@ async fn main() -> anyhow::Result<()> {
                                     continue;
                                 }
 
-                                // TODO: check health of this particular one
-                                if let Err(err) = check_health_single(
+                                process_account(
                                         &chain_data,
                                         &mango_group_id,
                                         &mango_cache_id,
-                                        &account_write.pubkey
-                                    ) {
-                                    warn!("error computing health of {}: {:?}", account_write.pubkey, err);
-                                }
+                                        &account_write.pubkey,
+                                        &liquidatable_sender,
+                                    );
                             }
                             // MangoCache
                             DataType::MangoCache => {
@@ -277,15 +297,14 @@ async fn main() -> anyhow::Result<()> {
                                 // and then working with the snapshot of the data
 
                                 for pubkey in mango_accounts.iter() {
-                                    let result = check_health_single(&chain_data, &mango_group_id, &mango_cache_id, &pubkey);
-                                    if let Err(err) = result {
-                                        warn!("error computing health of {}: {:?}", pubkey, err);
-                                        continue;
-                                    }
-                                    let health = result.unwrap();
-                                    if health.liquidatable {
-                                        info!("account {} has negative health {}", pubkey, health.health)
-                                    }
+                                    // TODO: This is slowed down by fetching env for each key
+                                    process_account(
+                                            &chain_data,
+                                            &mango_group_id,
+                                            &mango_cache_id,
+                                            &pubkey,
+                                            &liquidatable_sender,
+                                        );
                                 }
                             }
                             _ => {}
