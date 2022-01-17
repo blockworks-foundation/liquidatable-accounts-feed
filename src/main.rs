@@ -196,6 +196,38 @@ fn process_account(
     }
 }
 
+fn is_mango_account<'a>(
+    account: &'a AccountSharedData,
+    program_id: &Pubkey,
+    group_id: &Pubkey,
+) -> Option<&'a MangoAccount> {
+    let data = account.data();
+    if account.owner() != program_id || data.len() == 0 {
+        return None;
+    }
+    let kind = DataType::try_from(data[0]).unwrap();
+    if !matches!(kind, DataType::MangoAccount) {
+        return None;
+    }
+    if data.len() != std::mem::size_of::<MangoAccount>() {
+        return None;
+    }
+    let mango_account = MangoAccount::load_from_bytes(&data).expect("always Ok");
+    if mango_account.mango_group != *group_id {
+        return None;
+    }
+    Some(mango_account)
+}
+
+fn is_mango_cache<'a>(account: &'a AccountSharedData, program_id: &Pubkey) -> bool {
+    let data = account.data();
+    if account.owner() != program_id || data.len() == 0 {
+        return false;
+    }
+    let kind = DataType::try_from(data[0]).unwrap();
+    matches!(kind, DataType::MangoCache)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -257,70 +289,47 @@ async fn main() -> anyhow::Result<()> {
                 // specific program logic using the mirrored data
                 match message {
                     websocket_source::Message::Account(account_write) => {
-                        let data = account_write.account.data();
+                        if let Some(_mango_account) = is_mango_account(&account_write.account, &mango_program_id, &mango_group_id) {
+                            // Track all MangoAccounts: we need to iterate over them later
+                            mango_accounts.insert(account_write.pubkey);
 
-                        // TODO: Do we need to check health when open orders accounts change?
-                        if account_write.account.owner() != &mango_program_id || data.len() == 0 {
-                            continue;
+                            if !one_snapshot_done {
+                                continue;
+                            }
+                            process_account(
+                                    &chain_data,
+                                    &mango_group_id,
+                                    &mango_cache_id,
+                                    &account_write.pubkey,
+                                    &mut currently_liquidatable,
+                                    &liquidatable_sender,
+                                );
                         }
 
-                        let kind = DataType::try_from(data[0]).unwrap();
-                        match kind {
-                            // MangoAccount
-                            DataType::MangoAccount => {
-                                if data.len() != std::mem::size_of::<MangoAccount>() {
-                                    continue;
-                                }
-                                let data = MangoAccount::load_from_bytes(&data).expect("always Ok");
-                                if data.mango_group != mango_group_id {
-                                    continue;
-                                }
+                        if account_write.pubkey == mango_cache_id && is_mango_cache(&account_write.account, &mango_program_id) {
+                            if !one_snapshot_done {
+                                continue;
+                            }
 
-                                // Track all MangoAccounts: we need to iterate over them later
-                                mango_accounts.insert(account_write.pubkey);
+                            // check health of all accounts
 
-                                if !one_snapshot_done {
-                                    continue;
-                                }
+                            // TODO: This could be done asynchronously by calling
+                            // let accounts = chain_data.accounts_snapshot();
+                            // and then working with the snapshot of the data
 
+                            //let start = std::time::Instant::now();
+                            for pubkey in mango_accounts.iter() {
+                                // TODO: This is slowed down by fetching env for each key
                                 process_account(
                                         &chain_data,
                                         &mango_group_id,
                                         &mango_cache_id,
-                                        &account_write.pubkey,
+                                        &pubkey,
                                         &mut currently_liquidatable,
                                         &liquidatable_sender,
                                     );
                             }
-                            // MangoCache
-                            DataType::MangoCache => {
-                                if account_write.pubkey != mango_cache_id {
-                                    continue;
-                                }
-
-                                if !one_snapshot_done {
-                                    continue;
-                                }
-
-                                // check health of all accounts
-
-                                // TODO: This could be done asynchronously by calling
-                                // let accounts = chain_data.accounts_snapshot();
-                                // and then working with the snapshot of the data
-
-                                for pubkey in mango_accounts.iter() {
-                                    // TODO: This is slowed down by fetching env for each key
-                                    process_account(
-                                            &chain_data,
-                                            &mango_group_id,
-                                            &mango_cache_id,
-                                            &pubkey,
-                                            &mut currently_liquidatable,
-                                            &liquidatable_sender,
-                                        );
-                                }
-                            }
-                            _ => {}
+                            //warn!("scanned all in {}", (std::time::Instant::now() - start).as_millis());
                         }
                     }
                     _ => {}
@@ -328,6 +337,15 @@ async fn main() -> anyhow::Result<()> {
             },
             message = snapshot_receiver.recv() => {
                 let message = message.expect("channel not closed");
+
+                // Track all mango account pubkeys
+                for update in message.accounts.iter() {
+                    if let Some(_mango_account) = is_mango_account(&update.account, &mango_program_id, &mango_group_id) {
+                        // Track all MangoAccounts: we need to iterate over them later
+                        mango_accounts.insert(update.pubkey);
+                    }
+                }
+
                 chain_data.update_from_snapshot(message);
                 one_snapshot_done = true;
 
