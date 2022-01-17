@@ -14,6 +14,7 @@ use {
 #[derive(Clone, Debug)]
 pub enum LiquidatableInfo {
     Start { account: Pubkey },
+    Now { account: Pubkey },
     Stop { account: Pubkey },
 }
 
@@ -25,12 +26,7 @@ struct JsonRpcEnvelope<T: Serialize> {
 }
 
 #[derive(Serialize)]
-struct JsonRpcLiquidatableStart {
-    account: String,
-}
-
-#[derive(Serialize)]
-struct JsonRpcLiquidatableStop {
+struct JsonRpcLiquidatablePayload {
     account: String,
 }
 
@@ -82,14 +78,21 @@ async fn accept_connection(
                 let message = match data.unwrap() {
                     LiquidatableInfo::Start{account} => {
                         jsonrpc_message(&"startLiquidatable",
-                            JsonRpcLiquidatableStart {
+                            JsonRpcLiquidatablePayload {
+                                account: account.to_string(),
+                            }
+                        )
+                    },
+                    LiquidatableInfo::Now{account} => {
+                        jsonrpc_message(&"liquidatable",
+                            JsonRpcLiquidatablePayload {
                                 account: account.to_string(),
                             }
                         )
                     },
                     LiquidatableInfo::Stop{account} => {
                         jsonrpc_message(&"stopLiquidatable",
-                            JsonRpcLiquidatableStop {
+                            JsonRpcLiquidatablePayload {
                                 account: account.to_string(),
                             }
                         )

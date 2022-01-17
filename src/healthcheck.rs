@@ -171,6 +171,11 @@ pub fn process_accounts<'a>(
                 account: pubkey.clone(),
             });
         }
+        if liquidatable {
+            let _ = tx.send(LiquidatableInfo::Now {
+                account: pubkey.clone(),
+            });
+        }
         if !liquidatable && was_liquidatable {
             info!("account {} stopped being liquidatable", pubkey);
             currently_liquidatable.remove(pubkey);
