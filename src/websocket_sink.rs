@@ -81,22 +81,20 @@ async fn accept_connection(
 
                 let message = match data.unwrap() {
                     LiquidatableInfo::Start{account} => {
-                        jsonrpc_message(&"start_liquidatable",
+                        jsonrpc_message(&"startLiquidatable",
                             JsonRpcLiquidatableStart {
                                 account: account.to_string(),
                             }
                         )
                     },
                     LiquidatableInfo::Stop{account} => {
-                        jsonrpc_message(&"stop_liquidatable",
+                        jsonrpc_message(&"stopLiquidatable",
                             JsonRpcLiquidatableStop {
                                 account: account.to_string(),
                             }
                         )
                     },
                 };
-
-
                 ws_stream.send(Message::Text(message)).await?;
             },
             _ = interval.tick() => {

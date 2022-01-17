@@ -170,6 +170,7 @@ fn process_account(
     group_id: &Pubkey,
     cache_id: &Pubkey,
     account_id: &Pubkey,
+    currently_liquidatable: &mut HashSet<Pubkey>,
     tx: &broadcast::Sender<LiquidatableInfo>,
 ) {
     let res = compute_liquidatable_single(chain_data, group_id, cache_id, account_id);
@@ -178,9 +179,18 @@ fn process_account(
         return;
     }
     let res = res.unwrap();
-    if true || res.liquidatable {
-        info!("account {} is liquidatable: {:?}", account_id, res);
+    let was_liquidatable = currently_liquidatable.contains(account_id);
+    if res.liquidatable && !was_liquidatable {
+        info!("account {} is newly liquidatable: {:?}", account_id, res);
+        currently_liquidatable.insert(account_id.clone());
         let _ = tx.send(LiquidatableInfo::Start {
+            account: account_id.clone(),
+        });
+    }
+    if !res.liquidatable && was_liquidatable {
+        info!("account {} stopped being liquidatable", account_id);
+        currently_liquidatable.remove(account_id);
+        let _ = tx.send(LiquidatableInfo::Stop {
             account: account_id.clone(),
         });
     }
@@ -230,6 +240,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut chain_data = ChainData::new(&metrics);
     let mut mango_accounts = HashSet::<Pubkey>::new();
+    let mut currently_liquidatable = HashSet::<Pubkey>::new();
 
     let mut one_snapshot_done = false;
 
@@ -277,6 +288,7 @@ async fn main() -> anyhow::Result<()> {
                                         &mango_group_id,
                                         &mango_cache_id,
                                         &account_write.pubkey,
+                                        &mut currently_liquidatable,
                                         &liquidatable_sender,
                                     );
                             }
@@ -303,6 +315,7 @@ async fn main() -> anyhow::Result<()> {
                                             &mango_group_id,
                                             &mango_cache_id,
                                             &pubkey,
+                                            &mut currently_liquidatable,
                                             &liquidatable_sender,
                                         );
                                 }
