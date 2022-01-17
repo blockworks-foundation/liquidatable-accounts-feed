@@ -79,6 +79,19 @@ fn load_mango_account<T: Loadable + Sized>(
     return Ok(Loadable::load_from_bytes(&data).expect("always Ok"));
 }
 
+fn load_mango_account_from_chain<'a, T: Loadable + Sized>(
+    data_type: DataType,
+    chain_data: &'a ChainData,
+    pubkey: &Pubkey,
+) -> anyhow::Result<&'a T> {
+    load_mango_account::<T>(
+        data_type,
+        chain_data
+            .account(pubkey)
+            .context("retrieving account from chain")?,
+    )
+}
+
 pub fn load_open_orders(
     account: &AccountSharedData,
 ) -> anyhow::Result<&serum_dex::state::OpenOrders> {
@@ -121,35 +134,15 @@ struct IsLiquidatable {
     health: I80F48, // can be init or maint, depending on being_liquidated
 }
 
-fn compute_liquidatable_single(
-    chain_data: &ChainData,
-    group_id: &Pubkey,
-    cache_id: &Pubkey,
-    account_id: &Pubkey,
+fn compute_liquidatable(
+    group: &MangoGroup,
+    cache: &MangoCache,
+    account: &MangoAccount,
+    open_orders: &Vec<Option<&serum_dex::state::OpenOrders>>,
 ) -> anyhow::Result<IsLiquidatable> {
-    let group = load_mango_account::<MangoGroup>(
-        DataType::MangoGroup,
-        chain_data
-            .account(group_id)
-            .context("getting group account")?,
-    )?;
-    let cache = load_mango_account::<MangoCache>(
-        DataType::MangoCache,
-        chain_data
-            .account(cache_id)
-            .context("getting cache account")?,
-    )?;
-    let account = load_mango_account::<MangoAccount>(
-        DataType::MangoAccount,
-        chain_data
-            .account(account_id)
-            .context("getting user account")?,
-    )?;
-    let oos = get_open_orders(chain_data, group, account).context("getting user open orders")?;
-
     let assets = UserActiveAssets::new(group, account, vec![]);
     let mut health_cache = HealthCache::new(assets);
-    health_cache.init_vals_with_orders_vec(group, cache, account, &oos)?;
+    health_cache.init_vals_with_orders_vec(group, cache, account, open_orders)?;
 
     let health_type = if account.being_liquidated {
         HealthType::Init
@@ -165,20 +158,17 @@ fn compute_liquidatable_single(
     })
 }
 
-fn process_account(
-    chain_data: &ChainData,
-    group_id: &Pubkey,
-    cache_id: &Pubkey,
+fn handle_result(
     account_id: &Pubkey,
+    liquidatable_result: &anyhow::Result<IsLiquidatable>,
     currently_liquidatable: &mut HashSet<Pubkey>,
     tx: &broadcast::Sender<LiquidatableInfo>,
 ) {
-    let res = compute_liquidatable_single(chain_data, group_id, cache_id, account_id);
-    if let Err(err) = res {
+    if let Err(err) = liquidatable_result {
         warn!("error computing health of {}: {:?}", account_id, err);
         return;
     }
-    let res = res.unwrap();
+    let res = liquidatable_result.as_ref().unwrap();
     let was_liquidatable = currently_liquidatable.contains(account_id);
     if res.liquidatable && !was_liquidatable {
         info!("account {} is newly liquidatable: {:?}", account_id, res);
@@ -194,6 +184,48 @@ fn process_account(
             account: account_id.clone(),
         });
     }
+}
+
+fn process_accounts<'a>(
+    chain_data: &ChainData,
+    group_id: &Pubkey,
+    cache_id: &Pubkey,
+    accounts: impl Iterator<Item = &'a Pubkey>,
+    currently_liquidatable: &mut HashSet<Pubkey>,
+    tx: &broadcast::Sender<LiquidatableInfo>,
+) -> anyhow::Result<()> {
+    let group =
+        load_mango_account_from_chain::<MangoGroup>(DataType::MangoGroup, chain_data, group_id)
+            .context("loading group account")?;
+    let cache =
+        load_mango_account_from_chain::<MangoCache>(DataType::MangoCache, chain_data, cache_id)
+            .context("loading cache account")?;
+
+    for pubkey in accounts {
+        let account_result = load_mango_account_from_chain::<MangoAccount>(
+            DataType::MangoAccount,
+            chain_data,
+            pubkey,
+        );
+        let account = match account_result {
+            Ok(account) => account,
+            Err(err) => {
+                warn!("could not load account {}: {:?}", pubkey, err);
+                continue;
+            }
+        };
+        let oos = match get_open_orders(chain_data, group, account) {
+            Ok(oos) => oos,
+            Err(err) => {
+                warn!("could not load account {} open orders: {:?}", pubkey, err);
+                continue;
+            }
+        };
+        let res = compute_liquidatable(group, cache, account, &oos);
+        handle_result(pubkey, &res, currently_liquidatable, tx);
+    }
+
+    Ok(())
 }
 
 fn is_mango_account<'a>(
@@ -296,14 +328,16 @@ async fn main() -> anyhow::Result<()> {
                             if !one_snapshot_done {
                                 continue;
                             }
-                            process_account(
+                            if let Err(err) = process_accounts(
                                     &chain_data,
                                     &mango_group_id,
                                     &mango_cache_id,
-                                    &account_write.pubkey,
+                                    std::iter::once(&account_write.pubkey),
                                     &mut currently_liquidatable,
                                     &liquidatable_sender,
-                                );
+                            ) {
+                                warn!("could not process account {}: {:?}", account_write.pubkey, err);
+                            }
                         }
 
                         if account_write.pubkey == mango_cache_id && is_mango_cache(&account_write.account, &mango_program_id) {
@@ -312,24 +346,23 @@ async fn main() -> anyhow::Result<()> {
                             }
 
                             // check health of all accounts
-
+                            //
                             // TODO: This could be done asynchronously by calling
                             // let accounts = chain_data.accounts_snapshot();
                             // and then working with the snapshot of the data
-
-                            //let start = std::time::Instant::now();
-                            for pubkey in mango_accounts.iter() {
-                                // TODO: This is slowed down by fetching env for each key
-                                process_account(
-                                        &chain_data,
-                                        &mango_group_id,
-                                        &mango_cache_id,
-                                        &pubkey,
-                                        &mut currently_liquidatable,
-                                        &liquidatable_sender,
-                                    );
+                            //
+                            // However, this currently takes like 50ms for me in release builds,
+                            // so optimizing much seems unnecessary.
+                            if let Err(err) = process_accounts(
+                                    &chain_data,
+                                    &mango_group_id,
+                                    &mango_cache_id,
+                                    mango_accounts.iter(),
+                                    &mut currently_liquidatable,
+                                    &liquidatable_sender,
+                            ) {
+                                warn!("could not process accounts: {:?}", err);
                             }
-                            //warn!("scanned all in {}", (std::time::Instant::now() - start).as_millis());
                         }
                     }
                     _ => {}
