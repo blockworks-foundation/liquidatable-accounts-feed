@@ -42,6 +42,7 @@ pub struct Config {
     pub serum_program_id: String,
     pub snapshot_interval_secs: u64,
     pub websocket_server_bind_address: String,
+    pub early_liquidatable_percentage: f64,
 }
 
 pub fn encode_address(addr: &Pubkey) -> String {
@@ -149,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
                                 continue;
                             }
                             if let Err(err) = healthcheck::process_accounts(
+                                    &config,
                                     &chain_data,
                                     &mango_group_id,
                                     &mango_cache_id,
@@ -174,6 +176,7 @@ async fn main() -> anyhow::Result<()> {
                             // However, this currently takes like 50ms for me in release builds,
                             // so optimizing much seems unnecessary.
                             if let Err(err) = healthcheck::process_accounts(
+                                    &config,
                                     &chain_data,
                                     &mango_group_id,
                                     &mango_cache_id,

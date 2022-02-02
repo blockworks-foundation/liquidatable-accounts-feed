@@ -1,6 +1,7 @@
 use {
+    crate::Config,
     crate::chain_data::ChainData,
-    crate::websocket_sink::LiquidatableInfo,
+    crate::websocket_sink::{LiquidatableStatus, LiquidatableInfo},
     anyhow::Context,
     fixed::types::I80F48,
     log::*,
@@ -92,10 +93,13 @@ fn get_open_orders<'a>(
 struct IsLiquidatable {
     liquidatable: bool,
     being_liquidated: bool,
-    health: I80F48, // can be init or maint, depending on being_liquidated
+    health_fraction: I80F48, // always maint
+    assets: I80F48, // always maint
+    liabilities: I80F48, // always maint
 }
 
 fn compute_liquidatable(
+    config: &Config,
     group: &MangoGroup,
     cache: &MangoCache,
     account: &MangoAccount,
@@ -105,27 +109,35 @@ fn compute_liquidatable(
     let mut health_cache = HealthCache::new(assets);
     health_cache.init_vals_with_orders_vec(group, cache, account, open_orders)?;
 
-    let health_type = if account.being_liquidated {
-        HealthType::Init
+    let (assets, liabilities) = health_cache.get_health_components(group, HealthType::Maint);
+    let health_fraction = if liabilities > 0 {
+        assets / liabilities
     } else {
-        HealthType::Maint
+        I80F48::MAX
     };
-    let health = health_cache.get_health(group, health_type);
+
+    let still_being_liquidated = account.being_liquidated && health_cache.get_health(group, HealthType::Init) < 0;
+
+    let threshold = 1.0 + config.early_liquidatable_percentage / 100.0;
+    let liquidatable = health_fraction < threshold || still_being_liquidated;
 
     Ok(IsLiquidatable {
-        liquidatable: health < 0,
+        liquidatable,
         being_liquidated: account.being_liquidated,
-        health,
+        health_fraction,
+        assets,
+        liabilities,
     })
 }
 
 pub fn process_accounts<'a>(
+    config: &Config,
     chain_data: &ChainData,
     group_id: &Pubkey,
     cache_id: &Pubkey,
     accounts: impl Iterator<Item = &'a Pubkey>,
     currently_liquidatable: &mut HashSet<Pubkey>,
-    tx: &broadcast::Sender<LiquidatableInfo>,
+    tx: &broadcast::Sender<LiquidatableStatus>,
 ) -> anyhow::Result<()> {
     let group =
         load_mango_account_from_chain::<MangoGroup>(DataType::MangoGroup, chain_data, group_id)
@@ -155,32 +167,41 @@ pub fn process_accounts<'a>(
             }
         };
 
-        let liquidatable = match compute_liquidatable(group, cache, account, &oos) {
-            Ok(d) => d.liquidatable,
+        let info = match compute_liquidatable(config, group, cache, account, &oos) {
+            Ok(d) => d,
             Err(err) => {
                 warn!("error computing health of {}: {:?}", pubkey, err);
                 continue;
             }
         };
 
+        let liquidatable_info = LiquidatableInfo {
+            account: pubkey.clone(),
+            being_liquidated: info.being_liquidated,
+            health_fraction: info.health_fraction,
+            assets: info.assets,
+            liabilities: info.liabilities,
+        };
+
+        let is_liquidatable = info.liquidatable;
         let was_liquidatable = currently_liquidatable.contains(pubkey);
-        if liquidatable && !was_liquidatable {
+        if is_liquidatable && !was_liquidatable {
             info!("account {} is newly liquidatable", pubkey);
             currently_liquidatable.insert(pubkey.clone());
-            let _ = tx.send(LiquidatableInfo::Start {
-                account: pubkey.clone(),
+            let _ = tx.send(LiquidatableStatus::Start {
+                info: liquidatable_info.clone(),
             });
         }
-        if liquidatable {
-            let _ = tx.send(LiquidatableInfo::Now {
-                account: pubkey.clone(),
+        if is_liquidatable {
+            let _ = tx.send(LiquidatableStatus::Now {
+                info: liquidatable_info.clone(),
             });
         }
-        if !liquidatable && was_liquidatable {
+        if !is_liquidatable && was_liquidatable {
             info!("account {} stopped being liquidatable", pubkey);
             currently_liquidatable.remove(pubkey);
-            let _ = tx.send(LiquidatableInfo::Stop {
-                account: pubkey.clone(),
+            let _ = tx.send(LiquidatableStatus::Stop {
+                info: liquidatable_info.clone(),
             });
         }
     }

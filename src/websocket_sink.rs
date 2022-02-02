@@ -9,13 +9,23 @@ use {
     tokio::net::{TcpListener, TcpStream},
     //std::str::FromStr,
     tokio::sync::broadcast,
+    fixed::types::I80F48,
 };
 
 #[derive(Clone, Debug)]
-pub enum LiquidatableInfo {
-    Start { account: Pubkey },
-    Now { account: Pubkey },
-    Stop { account: Pubkey },
+pub struct LiquidatableInfo {
+    pub account: Pubkey,
+    pub being_liquidated: bool,
+    pub health_fraction: I80F48, // always maint
+    pub assets: I80F48, // always maint
+    pub liabilities: I80F48, // always maint
+}
+
+#[derive(Clone, Debug)]
+pub enum LiquidatableStatus {
+    Start { info: LiquidatableInfo },
+    Now { info: LiquidatableInfo },
+    Stop { info: LiquidatableInfo },
 }
 
 #[derive(Serialize)]
@@ -28,6 +38,22 @@ struct JsonRpcEnvelope<T: Serialize> {
 #[derive(Serialize)]
 struct JsonRpcLiquidatablePayload {
     account: String,
+    being_liquidated: bool,
+    health_fraction: f64,
+    assets: u64,
+    liabilities: u64,
+}
+
+impl From<&LiquidatableInfo> for JsonRpcLiquidatablePayload {
+    fn from(info: &LiquidatableInfo) -> Self {
+        Self {
+            account: info.account.to_string(),
+            being_liquidated: info.being_liquidated,
+            health_fraction: info.health_fraction.to_num::<f64>(),
+            assets: info.assets.to_num::<u64>(),
+            liabilities: info.liabilities.to_num::<u64>(),
+        }
+    }
 }
 
 fn jsonrpc_message(method: &str, payload: impl Serialize) -> String {
@@ -41,7 +67,7 @@ fn jsonrpc_message(method: &str, payload: impl Serialize) -> String {
 
 async fn accept_connection(
     stream: TcpStream,
-    mut rx: broadcast::Receiver<LiquidatableInfo>,
+    mut rx: broadcast::Receiver<LiquidatableStatus>,
 ) -> anyhow::Result<()> {
     use tokio_tungstenite::tungstenite::Message;
 
@@ -76,26 +102,14 @@ async fn accept_connection(
                 }
 
                 let message = match data.unwrap() {
-                    LiquidatableInfo::Start{account} => {
-                        jsonrpc_message(&"startLiquidatable",
-                            JsonRpcLiquidatablePayload {
-                                account: account.to_string(),
-                            }
-                        )
+                    LiquidatableStatus::Start{info} => {
+                        jsonrpc_message(&"startLiquidatable", JsonRpcLiquidatablePayload::from(&info))
                     },
-                    LiquidatableInfo::Now{account} => {
-                        jsonrpc_message(&"liquidatable",
-                            JsonRpcLiquidatablePayload {
-                                account: account.to_string(),
-                            }
-                        )
+                    LiquidatableStatus::Now{info} => {
+                        jsonrpc_message(&"liquidatable",JsonRpcLiquidatablePayload::from(&info))
                     },
-                    LiquidatableInfo::Stop{account} => {
-                        jsonrpc_message(&"stopLiquidatable",
-                            JsonRpcLiquidatablePayload {
-                                account: account.to_string(),
-                            }
-                        )
+                    LiquidatableStatus::Stop{info} => {
+                        jsonrpc_message(&"stopLiquidatable",JsonRpcLiquidatablePayload::from(&info))
                     },
                 };
                 ws_stream.send(Message::Text(message)).await?;
@@ -109,7 +123,7 @@ async fn accept_connection(
     Ok(())
 }
 
-pub async fn start(config: Config) -> anyhow::Result<broadcast::Sender<LiquidatableInfo>> {
+pub async fn start(config: Config) -> anyhow::Result<broadcast::Sender<LiquidatableStatus>> {
     // The channel that liquidatable event changes are sent through, to
     // be forwarded to websocket clients
     let (tx, _) = broadcast::channel(1000);

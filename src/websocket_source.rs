@@ -136,6 +136,7 @@ pub fn start(config: Config, sender: async_channel::Sender<Message>) {
     tokio::spawn(async move {
         // if the websocket disconnects, we get no data in a while etc, reconnect and try again
         loop {
+            info!("connecting to solana websocket streams");
             let out = feed_data(&config, sender.clone());
             let _ = out.await;
         }
