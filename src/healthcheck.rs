@@ -1,7 +1,7 @@
 use {
     crate::Config,
     crate::chain_data::ChainData,
-    crate::websocket_sink::{LiquidatableStatus, LiquidatableInfo},
+    crate::websocket_sink::{LiquidationCanditate, HealthInfo},
     anyhow::Context,
     fixed::types::I80F48,
     log::*,
@@ -90,21 +90,21 @@ fn get_open_orders<'a>(
 }
 
 #[derive(Debug)]
-struct IsLiquidatable {
-    liquidatable: bool,
+struct Health {
+    candidate: bool,
     being_liquidated: bool,
     health_fraction: I80F48, // always maint
     assets: I80F48, // always maint
     liabilities: I80F48, // always maint
 }
 
-fn compute_liquidatable(
+fn check_health(
     config: &Config,
     group: &MangoGroup,
     cache: &MangoCache,
     account: &MangoAccount,
     open_orders: &Vec<Option<&serum_dex::state::OpenOrders>>,
-) -> anyhow::Result<IsLiquidatable> {
+) -> anyhow::Result<Health> {
     let assets = UserActiveAssets::new(group, account, vec![]);
     let mut health_cache = HealthCache::new(assets);
     health_cache.init_vals_with_orders_vec(group, cache, account, open_orders)?;
@@ -118,12 +118,12 @@ fn compute_liquidatable(
 
     let still_being_liquidated = account.being_liquidated && health_cache.get_health(group, HealthType::Init) < 0;
 
-    let threshold = 1.0 + config.early_liquidatable_percentage / 100.0;
-    let liquidatable = health_fraction < threshold || still_being_liquidated;
+    let threshold = 1.0 + config.early_candidate_percentage / 100.0;
+    let candidate = health_fraction < threshold || still_being_liquidated;
 
-    Ok(IsLiquidatable {
-        liquidatable,
-        being_liquidated: account.being_liquidated,
+    Ok(Health {
+        candidate,
+        being_liquidated: still_being_liquidated,
         health_fraction,
         assets,
         liabilities,
@@ -136,8 +136,8 @@ pub fn process_accounts<'a>(
     group_id: &Pubkey,
     cache_id: &Pubkey,
     accounts: impl Iterator<Item = &'a Pubkey>,
-    currently_liquidatable: &mut HashSet<Pubkey>,
-    tx: &broadcast::Sender<LiquidatableStatus>,
+    current_candidates: &mut HashSet<Pubkey>,
+    tx: &broadcast::Sender<LiquidationCanditate>,
 ) -> anyhow::Result<()> {
     let group =
         load_mango_account_from_chain::<MangoGroup>(DataType::MangoGroup, chain_data, group_id)
@@ -167,7 +167,7 @@ pub fn process_accounts<'a>(
             }
         };
 
-        let info = match compute_liquidatable(config, group, cache, account, &oos) {
+        let info = match check_health(config, group, cache, account, &oos) {
             Ok(d) => d,
             Err(err) => {
                 warn!("error computing health of {}: {:?}", pubkey, err);
@@ -175,7 +175,7 @@ pub fn process_accounts<'a>(
             }
         };
 
-        let liquidatable_info = LiquidatableInfo {
+        let health_info = HealthInfo {
             account: pubkey.clone(),
             being_liquidated: info.being_liquidated,
             health_fraction: info.health_fraction,
@@ -183,25 +183,25 @@ pub fn process_accounts<'a>(
             liabilities: info.liabilities,
         };
 
-        let is_liquidatable = info.liquidatable;
-        let was_liquidatable = currently_liquidatable.contains(pubkey);
-        if is_liquidatable && !was_liquidatable {
-            info!("account {} is newly liquidatable", pubkey);
-            currently_liquidatable.insert(pubkey.clone());
-            let _ = tx.send(LiquidatableStatus::Start {
-                info: liquidatable_info.clone(),
+        let is_candidate = info.candidate;
+        let was_candidate = current_candidates.contains(pubkey);
+        if is_candidate && !was_candidate {
+            info!("account {} is a new candidate", pubkey);
+            current_candidates.insert(pubkey.clone());
+            let _ = tx.send(LiquidationCanditate::Start {
+                info: health_info.clone(),
             });
         }
-        if is_liquidatable {
-            let _ = tx.send(LiquidatableStatus::Now {
-                info: liquidatable_info.clone(),
+        if is_candidate {
+            let _ = tx.send(LiquidationCanditate::Now {
+                info: health_info.clone(),
             });
         }
-        if !is_liquidatable && was_liquidatable {
-            info!("account {} stopped being liquidatable", pubkey);
-            currently_liquidatable.remove(pubkey);
-            let _ = tx.send(LiquidatableStatus::Stop {
-                info: liquidatable_info.clone(),
+        if !is_candidate && was_candidate {
+            info!("account {} stopped being a candidate", pubkey);
+            current_candidates.remove(pubkey);
+            let _ = tx.send(LiquidationCanditate::Stop {
+                info: health_info.clone(),
             });
         }
     }

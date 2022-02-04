@@ -22,8 +22,8 @@ snapshot_interval_secs = 240
 # to listen to information about liquidatable accounts.
 websocket_server_bind_address = "localhost:9123"
 
-# If > 0, notify about liquidatable accounts before they become technically
-# liquidatable. The notification starts if
-#    assets / liabilities < 1.0 + early_liquidatable_percentage / 100
-early_liquidatable_percentage = 1.0
+# If > 0, notify about potentially liquidatable accounts before they
+# become technically liquidatable. The notification starts if
+#    assets / liabilities < 1.0 + early_candidate_percentage / 100
+early_candidate_percentage = 1.0
 

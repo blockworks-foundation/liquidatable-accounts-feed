@@ -13,7 +13,7 @@ use {
 };
 
 #[derive(Clone, Debug)]
-pub struct LiquidatableInfo {
+pub struct HealthInfo {
     pub account: Pubkey,
     pub being_liquidated: bool,
     pub health_fraction: I80F48, // always maint
@@ -22,10 +22,10 @@ pub struct LiquidatableInfo {
 }
 
 #[derive(Clone, Debug)]
-pub enum LiquidatableStatus {
-    Start { info: LiquidatableInfo },
-    Now { info: LiquidatableInfo },
-    Stop { info: LiquidatableInfo },
+pub enum LiquidationCanditate {
+    Start { info: HealthInfo },
+    Now { info: HealthInfo },
+    Stop { info: HealthInfo },
 }
 
 #[derive(Serialize)]
@@ -44,8 +44,8 @@ struct JsonRpcLiquidatablePayload {
     liabilities: u64,
 }
 
-impl From<&LiquidatableInfo> for JsonRpcLiquidatablePayload {
-    fn from(info: &LiquidatableInfo) -> Self {
+impl From<&HealthInfo> for JsonRpcLiquidatablePayload {
+    fn from(info: &HealthInfo) -> Self {
         Self {
             account: info.account.to_string(),
             being_liquidated: info.being_liquidated,
@@ -67,7 +67,7 @@ fn jsonrpc_message(method: &str, payload: impl Serialize) -> String {
 
 async fn accept_connection(
     stream: TcpStream,
-    mut rx: broadcast::Receiver<LiquidatableStatus>,
+    mut rx: broadcast::Receiver<LiquidationCanditate>,
 ) -> anyhow::Result<()> {
     use tokio_tungstenite::tungstenite::Message;
 
@@ -102,14 +102,14 @@ async fn accept_connection(
                 }
 
                 let message = match data.unwrap() {
-                    LiquidatableStatus::Start{info} => {
-                        jsonrpc_message(&"startLiquidatable", JsonRpcLiquidatablePayload::from(&info))
+                    LiquidationCanditate::Start{info} => {
+                        jsonrpc_message(&"candidateStart", JsonRpcLiquidatablePayload::from(&info))
                     },
-                    LiquidatableStatus::Now{info} => {
-                        jsonrpc_message(&"liquidatable",JsonRpcLiquidatablePayload::from(&info))
+                    LiquidationCanditate::Now{info} => {
+                        jsonrpc_message(&"candidate",JsonRpcLiquidatablePayload::from(&info))
                     },
-                    LiquidatableStatus::Stop{info} => {
-                        jsonrpc_message(&"stopLiquidatable",JsonRpcLiquidatablePayload::from(&info))
+                    LiquidationCanditate::Stop{info} => {
+                        jsonrpc_message(&"candidateStop",JsonRpcLiquidatablePayload::from(&info))
                     },
                 };
                 ws_stream.send(Message::Text(message)).await?;
@@ -123,7 +123,7 @@ async fn accept_connection(
     Ok(())
 }
 
-pub async fn start(config: Config) -> anyhow::Result<broadcast::Sender<LiquidatableStatus>> {
+pub async fn start(config: Config) -> anyhow::Result<broadcast::Sender<LiquidationCanditate>> {
     // The channel that liquidatable event changes are sent through, to
     // be forwarded to websocket clients
     let (tx, _) = broadcast::channel(1000);

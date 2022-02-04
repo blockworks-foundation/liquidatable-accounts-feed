@@ -42,7 +42,7 @@ pub struct Config {
     pub serum_program_id: String,
     pub snapshot_interval_secs: u64,
     pub websocket_server_bind_address: String,
-    pub early_liquidatable_percentage: f64,
+    pub early_candidate_percentage: f64,
 }
 
 pub fn encode_address(addr: &Pubkey) -> String {
@@ -105,9 +105,9 @@ async fn main() -> anyhow::Result<()> {
 
     let metrics = metrics::start();
 
-    // Information about liquidatable accounts is sent through this channel
-    // and then forwarded to all connected websocket clients
-    let liquidatable_sender = websocket_sink::start(config.clone()).await?;
+    // Information about potentially liquidatable accounts is sent through this
+    // channel and then forwarded to all connected websocket clients
+    let liquidation_candidate_sender = websocket_sink::start(config.clone()).await?;
 
     // Sourcing account and slot data from solana via websockets
     let (websocket_sender, websocket_receiver) =
@@ -125,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut chain_data = ChainData::new(&metrics);
     let mut mango_accounts = HashSet::<Pubkey>::new();
-    let mut currently_liquidatable = HashSet::<Pubkey>::new();
+    let mut current_candidates = HashSet::<Pubkey>::new();
 
     let mut one_snapshot_done = false;
 
@@ -155,8 +155,8 @@ async fn main() -> anyhow::Result<()> {
                                     &mango_group_id,
                                     &mango_cache_id,
                                     std::iter::once(&account_write.pubkey),
-                                    &mut currently_liquidatable,
-                                    &liquidatable_sender,
+                                    &mut current_candidates,
+                                    &liquidation_candidate_sender,
                             ) {
                                 warn!("could not process account {}: {:?}", account_write.pubkey, err);
                             }
@@ -181,8 +181,8 @@ async fn main() -> anyhow::Result<()> {
                                     &mango_group_id,
                                     &mango_cache_id,
                                     mango_accounts.iter(),
-                                    &mut currently_liquidatable,
-                                    &liquidatable_sender,
+                                    &mut current_candidates,
+                                    &liquidation_candidate_sender,
                             ) {
                                 warn!("could not process accounts: {:?}", err);
                             }
