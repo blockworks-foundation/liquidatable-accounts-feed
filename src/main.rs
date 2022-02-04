@@ -58,7 +58,7 @@ fn is_mango_account<'a>(
     if account.owner() != program_id || data.len() == 0 {
         return None;
     }
-    let kind = DataType::try_from(data[0]).unwrap();
+    let kind = DataType::try_from(data[0]).ok()?;
     if !matches!(kind, DataType::MangoAccount) {
         return None;
     }
