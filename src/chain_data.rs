@@ -31,11 +31,18 @@ pub struct AccountData {
     pub account: AccountSharedData,
 }
 
+/// Track slots and account writes
+///
+/// - use account() to retrieve the current best data for an account.
+/// - update_from_snapshot() and update_from_websocket() update the state for new messages
 pub struct ChainData {
+    /// only slots >= newest_rooted_slot are retained
     slots: HashMap<u64, SlotData>,
+    /// writes to accounts, only the latest rooted write an newer are retained
     accounts: HashMap<Pubkey, Vec<AccountData>>,
     newest_rooted_slot: u64,
     newest_processed_slot: u64,
+
     // storing global metrics here is not good style
     metric_slots_count: metrics::MetricU64,
     metric_accounts_count: metrics::MetricU64,

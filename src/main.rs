@@ -115,18 +115,31 @@ async fn main() -> anyhow::Result<()> {
     websocket_source::start(config.clone(), websocket_sender);
 
     // Wait for some websocket data to accumulate before requesting snapshots,
-    // to make it more likely that
-    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+    // to make it more likely that there's no gap between the slot the snapshot
+    // was for and the slot of the first websocket messages.
+    tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
 
     // Getting solana account snapshots via jsonrpc
     let (snapshot_sender, snapshot_receiver) =
         async_channel::unbounded::<snapshot_source::AccountSnapshot>();
     snapshot_source::start(config.clone(), snapshot_sender);
 
+    // The representation of current on-chain account data
     let mut chain_data = ChainData::new(&metrics);
+
+    // Addresses of the MangoAccounts belonging to the mango program.
+    // Needed to check health of them all when the cache updates.
     let mut mango_accounts = HashSet::<Pubkey>::new();
+
+    // List of accounts that are potentially liquidatable.
+    //
+    // Used to send a different message for newly liqudatable accounts and
+    // accounts that are still liquidatable but not fresh anymore.
+    //
+    // This should actually be done per connected websocket client, and not globally.
     let mut current_candidates = HashSet::<Pubkey>::new();
 
+    // Is the first snapshot done? Only start checking account health when it is.
     let mut one_snapshot_done = false;
 
     info!("main loop");
@@ -197,7 +210,6 @@ async fn main() -> anyhow::Result<()> {
                 // Track all mango account pubkeys
                 for update in message.accounts.iter() {
                     if let Some(_mango_account) = is_mango_account(&update.account, &mango_program_id, &mango_group_id) {
-                        // Track all MangoAccounts: we need to iterate over them later
                         mango_accounts.insert(update.pubkey);
                     }
                 }
