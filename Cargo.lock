@@ -2489,7 +2489,7 @@ dependencies = [
 [[package]]
 name = "mango"
 version = "3.3.2"
-source = "git+https://github.com/ckamm/mango-v3?branch=ckamm/liquidatable-dep#f5d00b2c5f701980398ee15f8f88dda2ec5d143f"
+source = "git+https://github.com/blockworks-foundation/mango-v3#f4294688fb00ff18b2bf0b730d79ce005f7d124e"
 dependencies = [
  "anchor-lang",
  "arrayref",
@@ -2516,7 +2516,7 @@ dependencies = [
 [[package]]
 name = "mango-common"
 version = "3.0.0"
-source = "git+https://github.com/ckamm/mango-v3?branch=ckamm/liquidatable-dep#f5d00b2c5f701980398ee15f8f88dda2ec5d143f"
+source = "git+https://github.com/blockworks-foundation/mango-v3#f4294688fb00ff18b2bf0b730d79ce005f7d124e"
 dependencies = [
  "bytemuck",
  "solana-program",
@@ -2525,7 +2525,7 @@ dependencies = [
 [[package]]
 name = "mango-logs"
 version = "0.1.0"
-source = "git+https://github.com/ckamm/mango-v3?branch=ckamm/liquidatable-dep#f5d00b2c5f701980398ee15f8f88dda2ec5d143f"
+source = "git+https://github.com/blockworks-foundation/mango-v3#f4294688fb00ff18b2bf0b730d79ce005f7d124e"
 dependencies = [
  "anchor-lang",
 ]
@@ -2533,7 +2533,7 @@ dependencies = [
 [[package]]
 name = "mango-macro"
 version = "3.0.0"
-source = "git+https://github.com/ckamm/mango-v3?branch=ckamm/liquidatable-dep#f5d00b2c5f701980398ee15f8f88dda2ec5d143f"
+source = "git+https://github.com/blockworks-foundation/mango-v3#f4294688fb00ff18b2bf0b730d79ce005f7d124e"
 dependencies = [
  "bytemuck",
  "mango-common",

@@ -14,9 +14,8 @@ solana-account-decoder = "=1.8.11"
 solana-sdk = "=1.8.11"
 solana-logger = "=1.8.11"
 
-# The v3.2 branch currently has a conflicting syn version dependency, use a fixed version
-mango = { git = "https://github.com/ckamm/mango-v3", branch = "ckamm/liquidatable-dep", features = ["client-side"] }
-mango-common = { git = "https://github.com/ckamm/mango-v3", branch = "ckamm/liquidatable-dep" }
+mango = { git = "https://github.com/blockworks-foundation/mango-v3", gitref = "f4294688fb00ff18b2bf0b730d79ce005f7d124e", features = ["client"] }
+mango-common = { git = "https://github.com/blockworks-foundation/mango-v3", gitref = "f4294688fb00ff18b2bf0b730d79ce005f7d124e" }
 
 serum_dex = { version = "0.4.0", git = "https://github.com/blockworks-foundation/serum-dex.git", default-features=false, features = ["no-entrypoint", "program"] }
 
