@@ -1,6 +1,7 @@
 use {
     crate::Config,
     anyhow::Context,
+    fixed::types::I80F48,
     futures_util::{SinkExt, StreamExt},
     log::*,
     serde::Serialize,
@@ -9,7 +10,6 @@ use {
     tokio::net::{TcpListener, TcpStream},
     //std::str::FromStr,
     tokio::sync::broadcast,
-    fixed::types::I80F48,
 };
 
 #[derive(Clone, Debug)]
@@ -17,8 +17,8 @@ pub struct HealthInfo {
     pub account: Pubkey,
     pub being_liquidated: bool,
     pub health_fraction: I80F48, // always maint
-    pub assets: I80F48, // always maint
-    pub liabilities: I80F48, // always maint
+    pub assets: I80F48,          // always maint
+    pub liabilities: I80F48,     // always maint
 }
 
 #[derive(Clone, Debug)]

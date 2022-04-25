@@ -47,6 +47,10 @@ pub struct Config {
     pub serum_program_id: String,
     pub snapshot_interval_secs: u64,
     pub websocket_server_bind_address: String,
+    // how many getMultipleAccounts requests to send in parallel
+    pub parallel_rpc_requests: usize,
+    // typically 100 is the max number for getMultipleAccounts
+    pub get_multiple_accounts_count: usize,
     pub early_candidate_percentage: f64,
 }
 

@@ -18,6 +18,12 @@ serum_program_id = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin"
 # Interval between requesting getProgramAccounts data snapshots
 snapshot_interval_secs = 240
 
+# Number of parallel getMultipleAccounts requests to send during snapshotting.
+parallel_rpc_requests = 10
+# Number of accounts that can be retrieved in a getMultipleAccounts call.
+# Typically 100 for normal RPC nodes.
+get_multiple_accounts_count = 100
+
 # Address at which a websocket server will be openend. Connect
 # to listen to information about liquidatable accounts.
 websocket_server_bind_address = "localhost:9123"

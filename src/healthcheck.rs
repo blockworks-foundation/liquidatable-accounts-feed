@@ -1,7 +1,7 @@
 use {
-    crate::Config,
     crate::chain_data::ChainData,
-    crate::websocket_sink::{LiquidationCanditate, HealthInfo},
+    crate::websocket_sink::{HealthInfo, LiquidationCanditate},
+    crate::Config,
     anyhow::Context,
     fixed::types::I80F48,
     log::*,
@@ -17,7 +17,7 @@ use {
 };
 
 // FUTURE: It'd be very nice if I could map T to the DataType::T constant!
-fn load_mango_account<T: Loadable + Sized>(
+pub fn load_mango_account<T: Loadable + Sized>(
     data_type: DataType,
     account: &AccountSharedData,
 ) -> anyhow::Result<&T> {
@@ -94,8 +94,8 @@ struct Health {
     candidate: bool,
     being_liquidated: bool,
     health_fraction: I80F48, // always maint
-    assets: I80F48, // always maint
-    liabilities: I80F48, // always maint
+    assets: I80F48,          // always maint
+    liabilities: I80F48,     // always maint
 }
 
 fn check_health(
@@ -116,7 +116,8 @@ fn check_health(
         I80F48::MAX
     };
 
-    let still_being_liquidated = account.being_liquidated && health_cache.get_health(group, HealthType::Init) < 0;
+    let still_being_liquidated =
+        account.being_liquidated && health_cache.get_health(group, HealthType::Init) < 0;
 
     let threshold = 1.0 + config.early_candidate_percentage / 100.0;
     let candidate = health_fraction < threshold || still_being_liquidated;
