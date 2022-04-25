@@ -19,6 +19,11 @@ use {
     std::str::FromStr,
 };
 
+// jemalloc seems to be better at keeping the memory footprint reasonable over
+// longer periods of time
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 trait AnyhowWrap {
     type Value;
     fn map_err_anyhow(self) -> anyhow::Result<Self::Value>;

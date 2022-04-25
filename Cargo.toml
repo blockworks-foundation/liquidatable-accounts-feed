@@ -43,6 +43,8 @@ async-stream = "0.2"
 async-channel = "1.6"
 async-trait = "0.1"
 
+jemallocator = "0.3.2"
+
 [patch.crates-io]
 # for gzip encoded responses
 jsonrpc-core-client = { git = "https://github.com/ckamm/jsonrpc.git", branch = "ckamm/http-with-gzip" }
