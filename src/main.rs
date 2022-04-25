@@ -147,10 +147,15 @@ async fn main() -> anyhow::Result<()> {
     // Is the first snapshot done? Only start checking account health when it is.
     let mut one_snapshot_done = false;
 
+    let mut metric_websocket_queue_len = metrics.register_u64("websocket_queue_length".into());
+    let mut metric_snapshot_queue_len = metrics.register_u64("snapshot_queue_length".into());
+    let mut metric_mango_accounts = metrics.register_u64("mango_accouns".into());
+
     info!("main loop");
     loop {
         tokio::select! {
             message = websocket_receiver.recv() => {
+                metric_websocket_queue_len.set(websocket_receiver.len() as u64);
                 let message = message.expect("channel not closed");
 
                 // build a model of slots and accounts in `chain_data`
@@ -163,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
                         if let Some(_mango_account) = is_mango_account(&account_write.account, &mango_program_id, &mango_group_id) {
                             // Track all MangoAccounts: we need to iterate over them later
                             mango_accounts.insert(account_write.pubkey);
+                            metric_mango_accounts.set(mango_accounts.len() as u64);
 
                             if !one_snapshot_done {
                                 continue;
@@ -210,6 +216,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             },
             message = snapshot_receiver.recv() => {
+                metric_snapshot_queue_len.set(snapshot_receiver.len() as u64);
                 let message = message.expect("channel not closed");
 
                 // Track all mango account pubkeys
@@ -218,6 +225,7 @@ async fn main() -> anyhow::Result<()> {
                         mango_accounts.insert(update.pubkey);
                     }
                 }
+                metric_mango_accounts.set(mango_accounts.len() as u64);
 
                 chain_data.update_from_snapshot(message);
                 one_snapshot_done = true;
