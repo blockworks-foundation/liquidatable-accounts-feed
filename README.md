@@ -31,6 +31,8 @@ Rust 1.59.0 can build this project. 1.57.0 is reported to work too.
 Users report that the dependencies `libclang-dev libudev-dev pkg-config` must be
 installed.
 
+This is `x86_64` only right now. `aarch64` is not a supported target.
+
 ## Running
 
 Run `liquidatable-accounts-feed myconfig.toml`. The service is supposed to run
