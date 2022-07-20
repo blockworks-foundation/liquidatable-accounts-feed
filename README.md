@@ -22,6 +22,15 @@ websocket server.
 
 All data resides in memory. The service does not write to disk.
 
+## Building
+
+Use a release build (`cargo build --release`) for production.
+
+Rust 1.59.0 can build this project. 1.57.0 is reported to work too.
+
+Users report that the dependencies `libclang-dev libudev-dev pkg-config` must be
+installed.
+
 ## Running
 
 Run `liquidatable-accounts-feed myconfig.toml`. The service is supposed to run
