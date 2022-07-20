@@ -56,6 +56,7 @@ async fn feed_data(config: &Config, sender: async_channel::Sender<Message>) -> a
         encoding: Some(UiAccountEncoding::Base64),
         commitment: Some(CommitmentConfig::processed()),
         data_slice: None,
+        min_context_slot: None,
     };
     let all_accounts_config = RpcProgramAccountsConfig {
         filters: None,

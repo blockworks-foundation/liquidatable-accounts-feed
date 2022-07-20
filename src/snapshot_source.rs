@@ -5,7 +5,7 @@ use solana_client::{
     rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig},
     rpc_response::{Response, RpcKeyedAccount},
 };
-use solana_rpc::{rpc::rpc_full::FullClient, rpc::OptionalContext};
+use solana_rpc::rpc::{rpc_accounts::AccountsDataClient, OptionalContext};
 use solana_sdk::{account::AccountSharedData, commitment_config::CommitmentConfig, pubkey::Pubkey};
 
 use anyhow::Context;
@@ -74,7 +74,7 @@ async fn feed_snapshots(
 ) -> anyhow::Result<()> {
     let mango_program_id = Pubkey::from_str(&config.mango_program_id)?;
 
-    let rpc_client = http::connect_with_options::<FullClient>(&config.rpc_http_url, true)
+    let rpc_client = http::connect_with_options::<AccountsDataClient>(&config.rpc_http_url, true)
         .await
         .map_err_anyhow()?;
 
@@ -82,6 +82,7 @@ async fn feed_snapshots(
         encoding: Some(UiAccountEncoding::Base64),
         commitment: Some(CommitmentConfig::processed()),
         data_slice: None,
+        min_context_slot: None,
     };
     let all_accounts_config = RpcProgramAccountsConfig {
         filters: None,
