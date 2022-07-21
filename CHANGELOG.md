@@ -1,3 +1,9 @@
+# v0.2.1
+
+- Update dependencies
+- Fix a bug where the service would sometimes consider stale data to be current,
+  due to websocket slot information arriving in an unexpected order.
+
 # v0.2.0
 
 - Improve snapshotting behavior for Serum OpenOrders account.
